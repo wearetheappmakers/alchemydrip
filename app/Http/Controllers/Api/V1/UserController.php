@@ -294,22 +294,43 @@ class UserController extends Controller
                         }
                     }
                     if($checkInv == 'true'){
-                        $get_last = So::orderBy('id','DESC')->first();
-                        if(isset($get_last))
+                        if ( date('m') > 3 ) 
                         {
-                            if($get_last->order_no)
-                            {
-                                $order_no = (integer)$get_last->order_no;
-                            }else{
-                                $order_no = 0;
-                            }
+                            $year = date('y') + 1;
+                        }
+                        else 
+                        {
+                            $year = date('y');
+                        }
+                        $pre_year = $year - 1;
+                        $year_format = $pre_year.'-'.$year.'/';
+                        $get_last = So::where('order_no','LIKE',$year_format.'%')->orderBy('id','DESC')->first();
+                        if(!isset($get_last))
+                        {
+                            $order_no = $year_format.'1';
                         }
                         else
                         {
-                            $order_no = 0;
+                            $explode = explode($year_format,$get_last->order_no);
+                            $order_no = $year_format.''.($explode[1]+1);
                         }
+                        // $get_last = So::orderBy('id','DESC')->first();
+                        // if(isset($get_last))
+                        // {
+                        //     if($get_last->order_no)
+                        //     {
+                        //         $order_no = (integer)$get_last->order_no;
+                        //     }else{
+                        //         $order_no = 0;
+                        //     }
+                        // }
+                        // else
+                        // {
+                        //     $order_no = 0;
+                        // }
                         $so = new So();
-                        $so->order_no = $order_no + 1 ;
+                        // $so->order_no = $order_no + 1 ;
+                        $so->order_no = $order_no;
                         $so->name = $request->name;
                         $so->number = $request->number;
 // $so->address = $request->address;
@@ -319,6 +340,26 @@ class UserController extends Controller
                     }
                 }
             } else {
+                if ( date('m') > 3 ) 
+                {
+                    $year = date('y') + 1;
+                }
+                else 
+                {
+                    $year = date('y');
+                }
+                $pre_year = $year - 1;
+                $year_format = $pre_year.'-'.$year.'/';
+                $get_last = So::where('order_no','LIKE',$year_format.'%')->orderBy('id','DESC')->first();
+                if(!isset($get_last))
+                {
+                    $order_no = $year_format.'1';
+                }
+                else
+                {
+                    $explode = explode($year_format,$get_last->order_no);
+                    $order_no = $year_format.''.($explode[1]+1);
+                }
                 $get_last = So::orderBy('id','DESC')->first();
                 if(isset($get_last))
                 {
@@ -334,7 +375,8 @@ class UserController extends Controller
                     $order_no = 0;
                 }
                 $so = new So();
-                $so->order_no = $order_no + 1 ;
+                // $so->order_no = $order_no + 1 ;
+                $so->order_no = $order_no;
                 $so->name = $request->name;
                 $so->number = $request->number;
 // $so->address = $request->address;
