@@ -49,11 +49,13 @@ class SoController extends Controller
 
             })
             ->addColumn('shops', function ($row) {
-                $schk = $row->users->shop->name;
+                // $schk = $row->users->shop->name;
+                $schk = isset($row->users->shop->name) ? $row->users->shop->name : '';
                 return $schk;
             })
             ->addColumn('usersname', function ($row) {
-                $schk = $row->users->name;
+                // $schk = $row->users->name;
+                $schk = isset($row->users->name) ? $row->users->name : '';
                 return $schk;
             })
             ->rawColumns(['action', 'singlecheckbox','shops','usersname'])

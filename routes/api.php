@@ -38,6 +38,7 @@ $api->version('v1', function ($api) {
             // Place Order
             $api_child->post('placeOrder', 'UserController@placeOrder');
             $api_child->post('newplaceOrder', 'UserController@newplaceOrder');
+            $api_child->post('sync_newplaceOrder', 'UserController@sync_newplaceOrder');
             $api_child->get('orderDetail', 'UserController@orderDetail');
             $api_child->post('new-orderDetail', 'UserController@neworderDetail');
             $api_child->post('deleteChildOrder','UserController@deleteChildOrder');

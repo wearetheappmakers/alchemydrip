@@ -610,6 +610,269 @@ class UserController extends Controller
             return response()->json(['status' => 0,'error' => 'Failed to place order, please try again.']);
         }
     }
+
+    public function sync_newplaceOrder(Request $request)
+    {
+        $user = JWTAuth::parseToken()->authenticate();
+    
+        if (!$request->name || !is_array($request->name)) {
+            return response()->json(['status' => 0, 'error' => 'No orders found to process.']);
+        }
+
+        $processedOrders = [];
+
+        foreach ($request->name as $orderIndex => $nameValue) {
+            
+            $hasProducts = isset($request->product_id[$orderIndex]) && is_array($request->product_id[$orderIndex]);
+            $hasOther = isset($request->other_name[$orderIndex]);
+            $hasSoraw = isset($request->soraw_name[$orderIndex]);
+            $hasOtherTwo = isset($request->other_name_two[$orderIndex]);
+            $hasOtherThree = isset($request->other_name_three[$orderIndex]);
+
+            if ($hasProducts || $hasOther || $hasSoraw || $hasOtherTwo || $hasOtherThree) {
+                
+                if ($hasProducts && !$hasOther && !$hasSoraw && !$hasOtherTwo && !$hasOtherThree) {
+                    
+                    foreach ($request->product_id[$orderIndex] as $productIndex => $value) {
+                        $genderId = $request->gender_id[$orderIndex][$productIndex] ?? null;
+                        $sizeId = $request->size_id[$orderIndex][$productIndex] ?? null;
+                        $qty = $request->qty[$orderIndex][$productIndex] ?? 0;
+
+                        $ProductInventory = ProductInventory::where('product_id', $value)
+                        ->where('gender_id', $genderId)
+                        ->where('size_id', $sizeId)
+                        ->first();
+                        
+                        $product_name = Product::where('id', $value)->value('name');
+
+                        if (isset($ProductInventory)) {
+                            if ($ProductInventory->inventory > $ProductInventory->used) {
+                                $newused = $ProductInventory->used + $qty;
+                                if ($newused <= $ProductInventory->inventory) {
+                                    $checkInv = 'true';
+                                } else {
+                                    return response()->json(['status' => 0, 'error' => 'Inventory not enough for ' . $product_name . ' in Order #' . ($orderIndex + 1)]);
+                                }
+                            } else {
+                                return response()->json(['status' => 0, 'error' => 'Inventory not found for ' . $product_name . ' in Order #' . ($orderIndex + 1)]);
+                            }
+                        } else {
+                            return response()->json(['status' => 0, 'error' => 'Inventory not found for ' . $product_name . ' in Order #' . ($orderIndex + 1)]);
+                        }
+                    }
+                }
+
+                if (date('m') > 3) {
+                    $year = date('y') + 1;
+                } else {
+                    $year = date('y');
+                }
+                $pre_year = $year - 1;
+                $year_format = $pre_year . '-' . $year . '/';
+                
+                $get_last = So::where('order_no', 'LIKE', $year_format . '%')->orderBy('id', 'DESC')->first();
+                if (!isset($get_last)) {
+                    $order_no = $year_format . '1';
+                } else {
+                    $explode = explode($year_format, $get_last->order_no);
+                    $order_no = $year_format . '' . ((int)$explode[1] + 1);
+                }
+
+                $so = new So();
+                $so->order_no = $order_no;
+                $so->name = $nameValue;
+                $so->number = $request->number[$orderIndex] ?? null;
+                $so->created_by = $user->id;
+                $so->save();
+
+                $total = 0; $qtyCount = 0; $gst = 0;
+
+                if ($hasProducts) {
+                    $totalAmount = [];
+                    $totalQty = [];
+
+                    foreach ($request->product_id[$orderIndex] as $productIndex => $value) {
+                        $genderId = $request->gender_id[$orderIndex][$productIndex] ?? null;
+                        $sizeId = $request->size_id[$orderIndex][$productIndex] ?? null;
+                        $pQty = $request->qty[$orderIndex][$productIndex] ?? 0;
+
+                        $product = Product::where('id', $value)->first();
+                        $productPrice = ProductPrice::where('product_id', $value)
+                        ->where('gender_id', $genderId)
+                        ->where('size_id', $sizeId)
+                        ->first();
+
+                        if ($product && $productPrice) {
+                            $so_child = new So_child();
+                            $so_child->so_id = $so->id;
+                            $so_child->product_id = $value;
+                            $so_child->school_id = $product->school_id;
+                            $so_child->qty = $pQty;
+                            $so_child->price = $productPrice->price;
+                            $so_child->wholesale_Price = $productPrice->wholesale_price;
+                            $so_child->amount = $pQty * $productPrice->wholesale_price;
+                            $so_child->size_id = $sizeId;
+                            $so_child->gender_id = $genderId;
+                            $so_child->save();
+
+                            $totalam = $so_child->amount;
+                            array_push($totalAmount, $totalam);
+                            array_push($totalQty, $pQty);
+
+                            $ProductInventory = ProductInventory::where('product_id', $value)
+                            ->where('gender_id', $genderId)
+                            ->where('size_id', $sizeId)
+                            ->first();
+                            if ($ProductInventory) {
+                                $ProductInventory->update([
+                                    'used' => $ProductInventory->used + $pQty,
+                                ]);
+                            }
+
+                            $gst += ((($product->gst * $productPrice->wholesale_price) / 100) * $pQty);
+                        }
+                    }
+                    $total = array_sum($totalAmount);
+                    $qtyCount = array_sum($totalQty);
+                }
+
+                $otherTotal = 0; $otherQty = 0;
+                if ($hasOther) {
+                    $other_total_qty = [];
+                    $other_total_amount = [];
+                    foreach ($request->other_name[$orderIndex] as $k => $val) {
+                        $so_other = new So_other();
+                        $so_other->so_id = $so->id;
+                        $so_other->name = $val;
+                        $so_other->qty = $request->other_qty[$orderIndex][$k] ?? 0;
+                        $so_other->price = $request->other_price[$orderIndex][$k] ?? 0;
+                        $so_other->amount = $so_other->qty * $so_other->price;
+                        $so_other->save();
+
+                        array_push($other_total_amount, $so_other->amount);
+                        array_push($other_total_qty, $so_other->qty);
+
+                        $gst += (((5 * $so_other->price) / 100) * $so_other->qty);
+                    }
+                    $otherTotal = array_sum($other_total_amount);
+                    $otherQty = array_sum($other_total_qty);
+                }
+
+                $otherTotaltwo = 0; $otherQtytwo = 0;
+                if ($hasOtherTwo) {
+                    $other_total_qty_two = [];
+                    $other_total_amount_two = [];
+                    foreach ($request->other_name_two[$orderIndex] as $k => $val) {
+                        $so_other = new So_OtherTwo();
+                        $so_other->so_id = $so->id;
+                        $so_other->name = $val;
+                        $so_other->qty = $request->other_qty_two[$orderIndex][$k] ?? 0;
+                        $so_other->price = $request->other_price_two[$orderIndex][$k] ?? 0;
+                        $so_other->amount = $so_other->qty * $so_other->price;
+                        $so_other->save();
+
+                        array_push($other_total_amount_two, $so_other->amount);
+                        array_push($other_total_qty_two, $so_other->qty);
+
+                        $gst += (((18 * $so_other->price) / 100) * $so_other->qty);
+                    }
+                    $otherTotaltwo = array_sum($other_total_amount_two);
+                    $otherQtytwo = array_sum($other_total_qty_two);
+                }
+
+                $otherTotalthree = 0; $otherQtythree = 0;
+                if ($hasOtherThree) {
+                    $other_total_qty_three = [];
+                    $other_total_amount_three = [];
+                    foreach ($request->other_name_three[$orderIndex] as $k => $val) {
+                        $so_other = new So_OtherThree();
+                        $so_other->so_id = $so->id;
+                        $so_other->name = $val;
+                        $so_other->qty = $request->other_qty_three[$orderIndex][$k] ?? 0;
+                        $so_other->price = $request->other_price_three[$orderIndex][$k] ?? 0;
+                        $so_other->amount = $so_other->qty * $so_other->price;
+                        $so_other->save();
+
+                        array_push($other_total_amount_three, $so_other->amount);
+                        array_push($other_total_qty_three, $so_other->qty);
+
+                        $gst += (((12 * $so_other->price) / 100) * $so_other->qty);
+                    }
+                    $otherTotalthree = array_sum($other_total_amount_three);
+                    $otherQtythree = array_sum($other_total_qty_three);
+                }
+
+                $sorawQty = 0; $sorawTotal = 0;
+                if ($hasSoraw) {
+                    $soraw_total_qty = [];
+                    $soraw_total_amount = [];
+                    foreach ($request->soraw_name[$orderIndex] as $k => $val) {
+                        $so_raw = new SoRaw();
+                        $so_raw->so_id = $so->id;
+                        $so_raw->name = $val;
+                        $so_raw->qty = $request->soraw_qty[$orderIndex][$k] ?? 0;
+                        $so_raw->price = $request->soraw_price[$orderIndex][$k] ?? 0;
+                        $so_raw->amount = $so_raw->qty * $so_raw->price;
+                        $so_raw->save();
+
+                        array_push($soraw_total_amount, $so_raw->amount);
+                        array_push($soraw_total_qty, $so_raw->qty);
+
+                        $gst += (((5 * $so_raw->price) / 100) * $so_raw->qty);
+                    }
+                    $sorawTotal = array_sum($soraw_total_amount);
+                    $sorawQty = array_sum($soraw_total_qty);
+                }
+
+                $so->update([
+                    'total_amount' => $total,
+                    'total_qty'  => $qtyCount, 
+                    'other_total_qty'  => $otherQty, 
+                    'other_total_amount'  => $otherTotal,
+                    'other_total_qty_two'  => $otherQtytwo,
+                    'other_total_amount_two'  => $otherTotaltwo,
+                    'other_total_qty_three'  => $otherQtythree,
+                    'other_total_amount_three'  => $otherTotalthree,
+                    'soraw_total_qty'  => $sorawQty, 
+                    'soraw_total_amount'  => $sorawTotal,
+                    'grand_total_qty' => $qtyCount + $otherQty + $sorawQty + $otherQtytwo + $otherQtythree, 
+                    'grand_total_amount' => $total + $otherTotal + $sorawTotal + $otherTotaltwo + $otherTotalthree,
+                    'grand_total_qty_two' => $qtyCount + $otherQtytwo + $sorawQty, 
+                    'grand_total_amount_two' => $total + $otherTotaltwo + $sorawTotal,
+                ]);
+
+                $param_ledger = [
+                    'so_id' => $so->id,
+                    'created_by' => $user->id,
+                    'shop_id' => $user->shop_id,
+                    'cgst' => round(($gst / 2), 2),
+                    'sgst' => round(($gst / 2), 2),
+                    'credit' => $so->grand_total_amount,
+                ];
+                Ledger::create($param_ledger);
+
+                $orderData = So::with('otherDataThree','otherDataTwo','childData','otherData','sorawData','childData.schools','childData.sizes','childData.genders')->where('id', $so->id)->first();
+                
+                $finalGst = 0;
+                foreach ($orderData->childData as $value) { $finalGst += $value->gst_amount; }
+                foreach ($orderData->otherDataTwo as $value) { $finalGst += $value->gst_amount; }
+                foreach ($orderData->otherData as $value) { $finalGst += $value->gst_amount; }
+                foreach ($orderData->otherDataThree as $value) { $finalGst += $value->gst_amount; }
+                
+                $orderData->cgst_amount = round($finalGst / 2, 2);
+                $orderData->sgst_amount = round($finalGst / 2, 2);
+
+                $processedOrders[] = $orderData;
+            }
+        }
+
+        return response()->json([
+            'success' => 1, 
+            'message' => "All orders synchronized successfully.", 
+            'orders' => $processedOrders
+        ]);
+    }
+    
     public function neworderDetail(Request $request)
     {
 
